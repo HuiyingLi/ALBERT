@@ -36,10 +36,6 @@ flags.DEFINE_string("input_file", None,
                     "Input raw text file (or comma-separated list of files).")
 
 flags.DEFINE_string(
-    "output_file", None,
-    "Output TF example file (or comma-separated list of files).")
-
-flags.DEFINE_string(
     "vocab_file", None,
     "The vocabulary file that the ALBERT model was trained on.")
 
@@ -220,6 +216,8 @@ def create_training_instances(input_files, tokenizer, max_seq_length,
                               max_predictions_per_seq, rng):
   """Create `TrainingInstance`s from raw text."""
   all_documents = [[]]
+  total_instance_cnt = 0
+  vocab_words = list(tokenizer.vocab.keys())
 
   # Input file format:
   # (1) One sentence per line. These should ideally be actual sentences, not
@@ -247,21 +245,31 @@ def create_training_instances(input_files, tokenizer, max_seq_length,
         if tokens:
           all_documents[-1].append(tokens)
 
-  # Remove empty documents
-  all_documents = [x for x in all_documents if x]
-  rng.shuffle(all_documents)
+      # Remove empty documents
+      all_documents = [x for x in all_documents if x]
+      rng.shuffle(all_documents)
 
-  vocab_words = list(tokenizer.vocab.keys())
-  instances = []
-  for _ in range(dupe_factor):
-    for document_index in range(len(all_documents)):
-      instances.extend(
-          create_instances_from_document(
-              all_documents, document_index, max_seq_length, short_seq_prob,
-              masked_lm_prob, max_predictions_per_seq, vocab_words, rng))
+      instances = []
+      for _ in range(dupe_factor):
+        for document_index in range(len(all_documents)):
+          instances.extend(
+              create_instances_from_document(
+                  all_documents, document_index, max_seq_length, short_seq_prob,
+                  masked_lm_prob, max_predictions_per_seq, vocab_words, rng))
 
-  rng.shuffle(instances)
-  return instances
+      rng.shuffle(instances)
+      total_instance_cnt += len(instances)
+      output_files = [input_file+".tfrecord"]
+      tf.logging.info("*** Writing to output files ***")
+      for output_file in output_files:
+        tf.logging.info("  %s", output_file)
+      write_instance_to_example_files(instances, tokenizer, FLAGS.max_seq_length,
+                                      FLAGS.max_predictions_per_seq, output_files)
+
+      #done writing tfrecord for one file, clear memory
+      all_documents = [[]]
+
+  tf.logging.info("number of instances: %i", total_instance_cnt)
 
 
 def create_instances_from_document(
@@ -633,24 +641,12 @@ def main(_):
     tf.logging.info("  %s", input_file)
 
   rng = random.Random(FLAGS.random_seed)
-  instances = create_training_instances(
+  create_training_instances(
       input_files, tokenizer, FLAGS.max_seq_length, FLAGS.dupe_factor,
       FLAGS.short_seq_prob, FLAGS.masked_lm_prob, FLAGS.max_predictions_per_seq,
       rng)
 
-  tf.logging.info("number of instances: %i", len(instances))
-
-  output_files = FLAGS.output_file.split(",")
-  tf.logging.info("*** Writing to output files ***")
-  for output_file in output_files:
-    tf.logging.info("  %s", output_file)
-
-  write_instance_to_example_files(instances, tokenizer, FLAGS.max_seq_length,
-                                  FLAGS.max_predictions_per_seq, output_files)
-
-
 if __name__ == "__main__":
   flags.mark_flag_as_required("input_file")
-  flags.mark_flag_as_required("output_file")
   flags.mark_flag_as_required("vocab_file")
   tf.app.run()
